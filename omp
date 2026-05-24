@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Always resolve links so session data dir name is consistent when running with or without bwrap
+WORKDIR=$(pwd -P)
+
+USER_NAME=${USER:-$(id -un)}
+
+ROOTFS_BINDS=(
+  --ro-bind /usr /usr
+  --ro-bind /lib /lib
+  --ro-bind /lib64 /lib64
+  --ro-bind /bin /bin
+  --ro-bind /sbin /sbin
+  --dev /dev
+  --proc /proc
+  --tmpfs /tmp
+)
+
+ETC_BINDS=(
+  --ro-bind /etc/group /etc/group
+  --ro-bind /etc/hosts /etc/hosts
+  --ro-bind /etc/nsswitch.conf /etc/nsswitch.conf
+  --ro-bind /etc/passwd /etc/passwd
+  --ro-bind /etc/resolv.conf /etc/resolv.conf
+  --ro-bind /etc/ssl /etc/ssl
+  --ro-bind-try /etc/ca-certificates /etc/ca-certificates
+)
+
+USER_BINDS=(
+  --bind-try "$HOME/.npm" "$HOME/.npm"
+  --bind-try "$HOME/.local" "$HOME/.local"
+  # --bind-try "$HOME/.local/state" "$HOME/.local/state"
+  --ro-bind-try "$HOME/.config/gh" "$HOME/.config/gh"
+  --ro-bind-try "$HOME/.config/git" "$HOME/.config/git"
+  --ro-bind-try "$HOME/.gitconfig" "$HOME/.gitconfig"
+  --ro-bind-try "$HOME/.nvm" "$HOME/.nvm"
+  --ro-bind-try "$HOME/.ssh/known_hosts" "$HOME/.ssh/known_hosts"
+  --ro-bind-try "$HOME/repo/ai/skills" "$HOME/repo/ai/skills"
+)
+
+# SSH agent socket - only bind if SSH_AUTH_SOCK is set and exists
+SSH_BINDS=()
+SSH_ENV=()
+if [[ -S "${SSH_AUTH_SOCK:-}" ]]; then
+  SSH_BINDS=( --ro-bind "$SSH_AUTH_SOCK" "$SSH_AUTH_SOCK" )
+  SSH_ENV=( --setenv SSH_AUTH_SOCK "$SSH_AUTH_SOCK" )
+fi
+
+# GPG configuration
+GPG_BINDS=()
+GPG_ENV=()
+GPG_SIGNING_KEY_ID_VALUE=${GPG_SIGNING_KEY_ID:-}
+if [[ -n "$GPG_SIGNING_KEY_ID_VALUE" ]]; then
+  GPG_ENV=( --setenv GPG_SIGNING_KEY_ID "$GPG_SIGNING_KEY_ID_VALUE" )
+fi
+
+# Bind the .gnupg directory with write access (needed for trustdb, key operations)
+if [ -d "$HOME/.gnupg" ]; then
+  GPG_BINDS=( --bind "$HOME/.gnupg" "$HOME/.gnupg" )
+fi
+
+# Bind the GPG agent socket directory (usually /run/user/<uid>/gnupg)
+GPG_SOCKDIR=
+if GPG_SOCKDIR=$(gpgconf --list-dirs socketdir 2>/dev/null) &&
+  [[ -n "$GPG_SOCKDIR" && -d "$GPG_SOCKDIR" ]]; then
+  GPG_BINDS+=( --bind "$GPG_SOCKDIR" "$GPG_SOCKDIR" )
+fi
+
+ENVS=(
+  --setenv HOME "$HOME"
+  --setenv USER "$USER_NAME"
+)
+
+WORK_BINDS=(
+  --bind "$WORKDIR" "$WORKDIR"
+)
+
+EXTRA_ARGS=(
+  --share-net
+  --unshare-pid
+  --die-with-parent
+  --chdir "$WORKDIR"
+)
+
+AGENT_BINDS=(
+  --bind-try "$HOME/.omp" "$HOME/.omp"
+  --bind-try "$HOME/.pi" "$HOME/.pi"
+  # oh-my-pi support reading prompts, skills, commands etc. from other agents
+  --ro-bind-try "$HOME/.agent" "$HOME/.agent"
+  --ro-bind-try "$HOME/.agents" "$HOME/.agents"
+  --ro-bind-try "$HOME/.claude" "$HOME/.claude"
+  --ro-bind-try "$HOME/.codex" "$HOME/.codex"
+  --ro-bind-try "$HOME/.copilot" "$HOME/.copilot"
+  --ro-bind-try "$HOME/.config/opencode" "$HOME/.config/opencode"
+  --ro-bind-try "$HOME/.vscode" "$HOME/.vscode"
+  --ro-bind-try "$HOME/.gemini" "$HOME/.gemini"
+)
+
+AGENT_BIN=${AGENT_BIN:-/usr/bin/omp}
+if [[ ! -x "$AGENT_BIN" ]]; then
+  printf 'omp wrapper: %s is not executable\n' "$AGENT_BIN" >&2
+  exit 127
+fi
+
+CMD=(/usr/bin/bwrap)
+CMD+=("${ROOTFS_BINDS[@]}")
+CMD+=("${ETC_BINDS[@]}")
+CMD+=("${USER_BINDS[@]}")
+CMD+=("${WORK_BINDS[@]}")
+CMD+=("${ENVS[@]}")
+CMD+=("${SSH_BINDS[@]}")
+CMD+=("${SSH_ENV[@]}")
+CMD+=("${GPG_BINDS[@]}")
+CMD+=("${GPG_ENV[@]}")
+CMD+=("${EXTRA_ARGS[@]}")
+CMD+=("${AGENT_BINDS[@]}")
+CMD+=("$AGENT_BIN")
+CMD+=("$@")
+
+"${CMD[@]}"
+
