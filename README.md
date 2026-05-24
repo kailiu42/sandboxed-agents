@@ -5,6 +5,11 @@ multiple coding agents — oh-my-pi, Claude Code, Codex, and anything else you a
 
 One script, per-agent profiles. No copy-paste.
 
+## Why
+
+Most coding agents ship with their own built-in sandbox. This tool wraps them with bubblewrap from the outside, so the system is protected even if the agent's own sandboxing is flawed.
+
+Review the built-in configuration and tighten it before use. The design keeps logic and configuration separate, making both easy to audit.
 ## Usage
 
 ```bash
