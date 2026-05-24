@@ -1,7 +1,7 @@
 # sandboxed-agents
 
 Unified [bwrap](https://github.com/containers/bubblewrap) sandbox wrapper for
-multiple code agents — OMP, Claude Code, Codex, and anything else you add.
+multiple coding agents — oh-my-pi, Claude Code, Codex, and anything else you add.
 
 One script, per-agent profiles. No copy-paste.
 
@@ -64,6 +64,8 @@ USER_BINDS+=(
 )
 ```
 
+You can use `=` to override defaults, or `+=` to append yours.
+
 ### Disable SSH/GPG for a specific agent
 
 ```bash
@@ -92,11 +94,11 @@ AGENT_BINDS=(
 1. Create a profile in `config/`:
 
 ```bash
-cat > config/qwen.conf << 'CONF'
-AGENT_BIN_DEFAULT=/usr/bin/qwen
+cat > config/copilot.conf << 'CONF'
+AGENT_BIN_DEFAULT=/usr/bin/copilot
 AGENT_LABEL="Qwen"
 AGENT_BINDS=(
-  --bind-try "$HOME/.qwen" "$HOME/.qwen"
+  --bind-try "$HOME/.copilot" "$HOME/.copilot"
 )
 CONF
 ```
@@ -104,8 +106,8 @@ CONF
 2. (Optional) Create a symlink for convenience:
 
 ```bash
-ln -s agent-wrapper qwen
-./qwen
+ln -s agent-wrapper copilot
+./copilot
 ```
 
 ## Config reference
