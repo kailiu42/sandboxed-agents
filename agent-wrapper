@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── agent-wrapper ───────────────────────────────────────────────────
+# Unified sandbox wrapper for code agents (OMP, Claude Code, Codex, …)
+#
+# Agent config is loaded from:
+#   1. $SCRIPT_DIR/config/common.conf     – shared sandbox policy
+#   2. $SCRIPT_DIR/config/$AGENT.conf     – per-agent profile
+#   3. ~/.config/sandboxed-agents/common.conf  – user override
+#   4. ~/.config/sandboxed-agents/$AGENT.conf  – user override
+#
+# Usage:
+#   ./omp                          # via symlink, auto-detects agent
+#   ./agent-wrapper --agent omp    # explicit
+#   ./agent-wrapper --agent=codex  # explicit alternative
+# ─────────────────────────────────────────────────────────────────────
+
+# ── Determine agent name ──────────────────────────────────────────
+AGENT_NAME=""
+if [[ "${1:-}" == "--agent" ]]; then
+    AGENT_NAME="$2"
+    shift 2
+elif [[ "${1:-}" == --agent=* ]]; then
+    AGENT_NAME="${1#--agent=}"
+    shift
+else
+    AGENT_NAME=$(basename "$0")
+fi
+
+# ── Resolve script directory (follow symlinks) ────────────────────
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+
+# ── Runtime context (available in config files via $WORKDIR, $USER_NAME) ─
+WORKDIR=$(pwd -P)
+USER_NAME=${USER:-$(id -un)}
+
+# ── Defaults (overridable by config sources) ──────────────────────
+ROOTFS_BINDS=()
+ETC_BINDS=()
+USER_BINDS=()
+ENVS=()
+WORK_BINDS=()
+EXTRA_ARGS=()
+AGENT_BINDS=()
+AGENT_BIN_DEFAULT=""
+AGENT_LABEL=""
+
+# ── Load config in priority order ─────────────────────────────────
+if [[ -f "$SCRIPT_DIR/config/common.conf" ]]; then
+    source "$SCRIPT_DIR/config/common.conf"
+fi
+
+if [[ -f "$SCRIPT_DIR/config/${AGENT_NAME}.conf" ]]; then
+    source "$SCRIPT_DIR/config/${AGENT_NAME}.conf"
+fi
+
+if [[ -f "${HOME}/.config/sandboxed-agents/common.conf" ]]; then
+    source "${HOME}/.config/sandboxed-agents/common.conf"
+fi
+
+if [[ -f "${HOME}/.config/sandboxed-agents/${AGENT_NAME}.conf" ]]; then
+    source "${HOME}/.config/sandboxed-agents/${AGENT_NAME}.conf"
+fi
+
+# ── SSH agent socket (gated by ALLOW_SSH, default true) ──────────
+SSH_BINDS=()
+SSH_ENV=()
+if [[ "${ALLOW_SSH:-true}" == "true" && -S "${SSH_AUTH_SOCK:-}" ]]; then
+    SSH_BINDS=( --ro-bind "$SSH_AUTH_SOCK" "$SSH_AUTH_SOCK" )
+    SSH_ENV=( --setenv SSH_AUTH_SOCK "$SSH_AUTH_SOCK" )
+fi
+
+# ── GPG (gated by ALLOW_GPG, default true) ───────────────────────
+GPG_BINDS=()
+GPG_ENV=()
+if [[ "${ALLOW_GPG:-true}" == "true" ]]; then
+    if [[ -n "${GPG_SIGNING_KEY_ID:-}" ]]; then
+        GPG_ENV=( --setenv GPG_SIGNING_KEY_ID "$GPG_SIGNING_KEY_ID" )
+    fi
+    if [ -d "$HOME/.gnupg" ]; then
+        GPG_BINDS=( --bind "$HOME/.gnupg" "$HOME/.gnupg" )
+    fi
+    if GPG_SOCKDIR=$(gpgconf --list-dirs socketdir 2>/dev/null) &&
+       [[ -n "$GPG_SOCKDIR" && -d "$GPG_SOCKDIR" ]]; then
+        GPG_BINDS+=( --bind "$GPG_SOCKDIR" "$GPG_SOCKDIR" )
+    fi
+fi
+
+# ── Pick binary ───────────────────────────────────────────────────
+AGENT_BIN=${AGENT_BIN:-${AGENT_BIN_DEFAULT}}
+if [[ ! -x "$AGENT_BIN" ]]; then
+    printf '%s wrapper: %s is not executable\n' \
+        "${AGENT_LABEL:-$AGENT_NAME}" "$AGENT_BIN" >&2
+    exit 127
+fi
+
+# ── Assemble and exec ─────────────────────────────────────────────
+CMD=(/usr/bin/bwrap)
+CMD+=("${ROOTFS_BINDS[@]}")
+CMD+=("${ETC_BINDS[@]}")
+CMD+=("${USER_BINDS[@]}")
+CMD+=("${WORK_BINDS[@]}")
+CMD+=("${ENVS[@]}")
+CMD+=("${SSH_BINDS[@]}")
+CMD+=("${SSH_ENV[@]}")
+CMD+=("${GPG_BINDS[@]}")
+CMD+=("${GPG_ENV[@]}")
+CMD+=("${EXTRA_ARGS[@]}")
+CMD+=("${AGENT_BINDS[@]}")
+CMD+=("$AGENT_BIN")
+CMD+=("$@")
+
+exec "${CMD[@]}"
